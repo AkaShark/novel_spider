@@ -1,0 +1,112 @@
+import requests
+import re
+import pymysql
+
+headers={
+'Accept-Encoding': 'gzip, deflate',
+'Accept-Language': 'zh-CN,zh;q=0.9',
+'Connection': 'keep-alive',
+'Cookie': 'UM_distinctid=1623cce7b59625-0d555821af2d15-33637805-384000-1623cce7b5a858; _ga=GA1.2.2015283426.1521626765',
+'If-Modified-Since': 'Sat, 17 Mar 2018 11:15:35 GMT',
+'If-None-Match': '"5aacf8d7-2bc4"',
+'Referer': 'http://www.quanshuwang.com/list/1_1.html',
+'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3325.162 Safari/537.36',
+}
+
+
+def get_navigation_title_List():
+    response = requests.get('http://www.quanshuwang.com/list/1_1.html',headers=headers)
+    response.encoding = "gbk"
+    result = response.text
+    reg = r'<li><a href="(.*?)">.*?</a></li>'
+    title_list = re.findall(reg,result)
+    return title_list[:12]
+
+def get_sort_list(url):
+    response = requests.get(url,headers=headers)
+    response.encoding = 'gbk'
+    result = response.text
+    reg =r'<a target="_blank" title="(.*?)" href="(.*?)" class="clearfix stitle">'
+    novel_url_list = re.findall(reg,result) #通过findall匹配的为列表 集合可迭代对象
+    return novel_url_list
+
+def get_novel_url(url):
+    response = requests.get(url,headers=headers)
+    response.encoding = "gbk"
+    result = response.text
+    reg = r'<a href="(.*?)" class="reader" title=".*?">'
+    if len(re.findall(reg,result)):
+        novel_url = re.findall(reg, result)[0]
+        response = requests.get(novel_url, headers=headers)
+        response.encoding = "gbk"
+        result = response.text
+        reg = r'<li><a href="(.*?)" title=".*?">(.*?)</a></li>'
+        chapter_url_list = re.findall(reg, result)
+        return chapter_url_list
+    else:
+        return 0
+
+
+
+def get_chapter_content(url):
+    response = requests.get(url,headers=headers)
+    response.encoding = "gbk"
+    result = response.text
+    reg = r'style5\(\);</script>(.*?)<script type="text/javascript">'
+    chapter_content = re.findall(reg,result,re.S) #re.S 允许正则匹配多行 [\s\S]正则匹配任意字符
+    return chapter_content
+
+def connectdb():
+    conn = pymysql.connect(host='localhost', user='root', passwd='kys', db='novel',charset='utf8')
+    return conn
+
+def closedb(db):
+    db.close()
+
+def create_table(cursor):
+    sql = "CREATE TABLE novel_all (id INT AUTO_INCREMENT NOT NULL,`book` VARCHAR(255) ,`title` varchar(255),`content` text, primary key (id))"
+    cursor.execute(sql)
+
+def create_by_novel_title(cursor,novel_title):
+    sql = "CREATE TABLE %s (id INT AUTO_INCREMENT NOT NULL,`title` varchar(255),`content` text, primary key (id))" % novel_title
+    cursor.execute(sql)
+
+if __name__ == '__main__':
+    db = connectdb()
+    cursor = db.cursor()
+    # create_table(cursor)
+    for web_url in get_navigation_title_List():
+        for novel_title,novel_url in get_sort_list(web_url):
+            create_by_novel_title(cursor,novel_title)
+
+            if get_novel_url(novel_url):
+                for chapter_url, chapter_title in get_novel_url(novel_url):
+                    chapter_content = get_chapter_content(chapter_url)
+                    if len(chapter_content):
+                        print(chapter_content)
+                        sql = "INSERT INTO %s(title,content) VALUES ('%s', '%s')" % (
+                            novel_title, chapter_title, chapter_content[0])
+                        try:
+                            cursor.execute(sql)
+                            db.commit()
+                            print("插入章节:%s" % novel_title + chapter_title)
+                        except:
+                            db.rollback()
+                            continue
+                    else:
+                        continue
+            else:
+                continue
+
+    closedb(db)
+
+
+
+
+
+
+
+
+
+
+
